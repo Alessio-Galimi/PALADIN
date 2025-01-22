@@ -1,0 +1,1384 @@
+---
+title: "Tesi"
+author: "Alessio Galimi"
+date: ''
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, eval=FALSE)
+```
+
+```{r}
+diseases_names = c("KICH","BLCA", "BRCA", "COAD", "ESCA", "KIRC", 
+                  "KIRP", "LIHC", "LUAD", "LUSC", "PAAD", "PRAD", 
+                  "READ", "SKCM", "STAD", "THCA", "THYM", "UCEC")
+
+```
+
+Now we fix problems with genes names. We need them to be compatible to be R object names. A syntactically valid name consists of letters, numbers and the dot or underline characters and starts with a letter or the dot not followed by a number. The make.names function makes syntactically valid names out of character vectors. So we will create a character vector containing all the genes names from the different sources of data we use, and and we will create a dictionary to convert the not valid names.
+
+
+```{r}
+# First source of data: the count data
+all_genes_names=c()
+for(disease in diseases_names){
+   expr_matrix = read.csv(file  = paste0("lai_csbj_network-medicine-pancancer/code_data/Raw data/TCGA/", disease, "_countData_symbol.csv"), row.names = 1)
+   all_genes_names=c(all_genes_names,rownames(expr_matrix))
+}
+all_genes_names=unique(all_genes_names) #we don't need duplicates
+```
+
+```{r}
+# Second source of data: SIGNOR
+interactome <- read.csv("all_data_21_12_24.tsv",
+                         header = TRUE,
+                         sep = "\t",
+                         quote = "",        # Disable quote handling
+                         fill = TRUE,       # Handle unequal lines
+                         strip.white = TRUE # Remove whitespace
+)
+
+
+all_genes_names=c(all_genes_names,interactome$ENTITYA,interactome$ENTITYB)
+all_genes_names=unique(all_genes_names) #we don't need duplicates
+
+# Third source of data : the drug targets. In this case, the original dataset
+# did not use gene names, so we have to work on it in the next cell
+
+```
+
+We have to modify the P07 file (drug to target, downloaded from TTD) so that it uses the genes names instead of the TTD ids. We have to choose which drugs to consider based on their status
+
+## Target TTD id to Target gene name mapping
+We got this from the Therapeutic Target Database
+```{r}
+#We first need to organize the txt file we downloaded.
+library(readr)
+
+#In the following file we have data including  TTD IDs and genes names relative to
+# target genes
+ttd_genename_mapping=read_lines("P1_01_TTD_target_download.txt",skip=32,skip_empty_rows = TRUE)
+```
+
+```{r}
+ttdid_column=character()
+genename_column=character()
+#prendi solo il primo
+
+for(elem in ttd_genename_mapping){
+  line_splitted=strsplit(elem, "\t")[[1]]
+  if (line_splitted[2]=="GENENAME"){
+    
+    ttdid_column=append(ttdid_column,line_splitted[1])
+    genename_column=append(genename_column,line_splitted[3])
+  }
+}
+```
+
+```{r}
+ttdid_genename_data=data.frame(TTD_id=ttdid_column,gene_name=genename_column)
+
+for (row_id in 1:nrow(ttdid_genename_data)){
+    row=ttdid_genename_data[row_id,]
+    genename=row[[2]]
+    if(";" %in% genename){
+    vec_of_genenames=strsplit(genename,";")
+    for (elem in vec_of_genenames){
+      ttdid_genename_data[nrow(ttdid_genename_data)+1,]=c(row[[1]],elem)
+    }}}
+
+ttdid_genename_data=ttdid_genename_data[-grep(";", ttdid_genename_data$gene_name),]
+
+
+# In the next file we save the mapping from TTD IDs to genes names
+#write.table(ttdid_genename_data,file="TTDid_genename_mapping.csv",row.names=FALSE)
+
+```
+
+```{r}
+library(readxl)
+P07=read_xlsx("P1-07-Drug-TargetMapping.xlsx")
+ttdid_genename_map=read.csv("TTDid_genename_mapping.csv",sep=" ")
+mod_P07=data.frame(TargetID=character(), DrugID=character(), Highest_status=character(), MOA=character(), Gene_name=character())
+colnames(mod_P07)=c("TargetID", "DrugID", "Highest_status", "MOA", "Gene_name")
+for (row_id in 1:nrow(P07)){
+    row=P07[row_id,]
+    ttd_id=row[[1]]
+    # there might be more than one gene name corresponding to each TTD id
+    vec_of_genenames=ttdid_genename_map[ttdid_genename_map$TTD_id==ttd_id,]$gene_name
+    if(length(vec_of_genenames>0)){
+    # we create a row for each possible gene name associated to a TTD id
+    for (elem in strsplit(vec_of_genenames,";")[[1]]){
+      mod_P07[nrow(mod_P07)+1,]=c(row[[1]],row[[2]],row[[3]],row[[4]],elem)
+    }}
+}
+
+
+status_to_keep= c("approved","Approved","Approved (orphan drug)",               "Approved in China","Clinical trial","Patented", "Phase 0","Phase 1","Phase 1/2","Phase 1/2a", "Phase 1b","Phase 1b/2a","Phase2","Phase 2/3","Phase 2a","Phase 2b","Phase 3","Phase 4","Preregistration")
+
+# We ignore drugs withdrawn from market, terminated or discontinued during clinical trials. We also ignore drugs in the investigative stage.
+mod_P07=mod_P07[mod_P07$Highest_status %in% status_to_keep,]
+
+
+#write.csv(mod_P07,"mod_P07.csv")
+```
+
+Now we go back to working on the character vector containing all genes names.
+```{r}
+#Third source of data : the (modified by us) drug targets
+drugs_targets=read.csv("mod_P07.csv",header=TRUE)
+all_genes_names=c(all_genes_names,drugs_targets$Gene_name)
+all_genes_names=unique(all_genes_names) #we don't need duplicates
+
+```
+
+
+```{r}
+mod_all_genes_names=make.names(all_genes_names, unique=TRUE)
+# 18911 genes names need not to be modified. For the remaining 2263 genes names, we create a dictionary
+keys=all_genes_names[which(all_genes_names!=mod_all_genes_names)]
+genes_dict=mod_all_genes_names[which(all_genes_names!=mod_all_genes_names)]
+names(genes_dict)=keys
+
+#save(genes_dict, file="dic.RData")
+# We can use load("dic.RData") to restore the "genes_dict" vector 
+```
+
+
+We use the count data from the paper.
+
+### Differential Expression Analysis + DEG Heatmap + DEG PCA +All genes PCA
+```{r}
+library(DESeq2)
+library(pheatmap)
+library(dplyr)
+library(ggplot2)
+
+
+
+DEG_heatmap_PCA = function(name)
+{
+  expr_matrix = read.csv(file  = paste0("lai_csbj_network-medicine-pancancer/code_data/Raw data/TCGA/", name, "_countData_symbol.csv"), row.names = 1)
+  condition=as.factor(substring(colnames(expr_matrix),0,2)) # We reduce condition to just "TP" or "NT"
+  names(condition)=colnames(expr_matrix)
+  metadata=data.frame(condition)
+  
+  #check that the order of samples is the same in both expr matrix and metadata
+  all(rownames(metadata)==colnames(expr_matrix))
+  
+  #we want to modify the genes names so that they are all valid names for an R object.
+  mod_rownames <- sapply(rownames(expr_matrix), function(gene_name) {
+  if (gene_name %in% names(genes_dict)) {
+    return(genes_dict[[gene_name]])
+    
+  } else {
+    return(gene_name)
+  }
+})
+  names(mod_rownames)=NULL
+  rownames(expr_matrix)=mod_rownames
+  dds = DESeqDataSetFromMatrix(countData = expr_matrix,colData = metadata,design=~ condition)
+  
+
+  dds = DESeq(dds)
+  des_res = results(dds, contrast=c('condition', 'TP', 'NT'),alpha=0.05)
+  des = subset(as.data.frame(des_res), padj != "NA")
+  des = des[des$padj <= 0.05,]
+  des_temp = des[abs(des$log2FoldChange) >= 2,]
+  if(dim(des_temp)[1]<4000){
+    des=des[abs(des$log2FoldChange) >= 1,]
+    threshold=1
+  } else {
+      des=des_temp
+      threshold=2
+  }
+  
+  data=data.frame(disease=c(name),number_of_DEGs=c(dim(des)[1]), Log2FoldChange_Threshold_used=c(threshold))
+  
+  write.table(data,file="Number of DEGs and Log2FoldChange used.csv",row.names = FALSE,append=TRUE,col.names = FALSE)
+  
+  #We add the normalized counts to the DESeq analysis results
+  deg_tot = merge(des, as.data.frame(counts(dds, normalized = TRUE)), by = "row.names", sort = FALSE)
+  rownames(deg_tot)=deg_tot$Row.names
+
+  write.csv(deg_tot , file=paste0("Thesis/DEG/", name,"_DEG_symbol.csv"), row.names=TRUE)
+  
+  #Heatmap
+  deg_mat=as.matrix(deg_tot[,c(-1,-2,-3,-4,-5,-6,-7)])
+  deg_mat=round(deg_mat)
+  vst_data=vst(deg_mat,blind=TRUE)
+  vst_cor=cor(vst_data)
+  
+  pdf(paste0("Thesis/samples_heatmap_DEG/",name,"_samples_heatmap_DEG_symbol.pdf"))
+  p=pheatmap(vst_cor,annotation_col=select(metadata,condition),annotation_row=select(metadata,condition),show_rownames = FALSE,show_colnames = FALSE, annotation_colors =list(condition= c("TP"="black","NT"="yellow")),main=paste0("Heatmap for DEG - ",name))
+  print(p)
+  dev.off()
+  Sys.sleep(1)
+  
+  #PCA-All genes
+  vst_pca=vst(dds,blind=TRUE)
+  pdf(paste0("Thesis/PCA_All_genes/",name,"_PCA_All_genes_symbol.pdf"))
+  p=plotPCA(vst_pca,intgroup="condition")
+  p_title=p+ggtitle(paste0("PCA for all genes - ",name))
+  print(p_title)
+  dev.off()
+  Sys.sleep(1)
+  
+  #PCA-DEG
+  dds_deg = dds[rownames(deg_tot), ]
+  vst_pca=vst(dds_deg,blind=TRUE)
+  pdf(paste0("Thesis/PCA_DEG/",name,"_PCA_DEG_symbol.pdf"))
+  p=plotPCA(vst_pca,intgroup="condition")
+  print(p+ggtitle(paste0("PCA for DEG - ",name)))
+  dev.off()
+  Sys.sleep(1)
+}
+
+for(disease in diseases_names){
+  DEG_heatmap_PCA(disease)
+}
+```
+
+
+### Gene set Enrichment Analysis
+```{r}
+library(clusterProfiler)
+library(enrichplot)
+library("org.Hs.eg.db")
+enrichment = function(name){
+  
+  #GO
+  DEG=read.csv(file=paste0("Thesis/DEG/",name,"_DEG_symbol.csv"),header=TRUE)
+  genes=DEG$log2FoldChange
+  names(genes)=DEG$Row.names
+  genes_final=na.omit(genes)
+  genes_final=sort(genes_final,decreasing=TRUE)
+  gse_go= gseGO(geneList = genes_final, ont="ALL", OrgDb = "org.Hs.eg.db", keyType="SYMBOL", maxGSSize = 20000, pvalueCutoff = 0.05, pAdjustMethod = "fdr",eps=0  )
+  
+  #KEGG 
+  ids = bitr(names(genes_final), fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org.Hs.eg.db)
+  dedup_ids = ids[!duplicated(ids[c("SYMBOL")]),]
+  colnames(dedup_ids) = c("GeneSymbol", "EntrezID")
+  df_genes_final=data.frame(genes_final)
+  df_genes_final$GeneSymbol=rownames(df_genes_final)
+  colnames(df_genes_final) = c("LFC","GeneSymbol")
+  kegg_df = merge(df_genes_final, dedup_ids, by = "GeneSymbol")
+
+  # Create a vector of the gene universe
+  kegg_gene_list = kegg_df$LFC
+
+  # Name vector with ENTREZ ids
+  names(kegg_gene_list) = kegg_df$EntrezID
+
+  # omit any NA values 
+  kegg_gene_list = na.omit(kegg_gene_list)
+
+  # sort the list in decreasing order (required for clusterProfiler)
+  kegg_gene_list = sort(kegg_gene_list, decreasing = TRUE)
+
+
+  gse_kegg=gseKEGG(geneList = kegg_gene_list,organism="hsa",maxGSSize = 20000, pvalueCutoff = 0.05, pAdjustMethod = "fdr",eps=0, keyType="ncbi-geneid")
+  
+  #PDF creation  
+  pdf(paste0("Thesis/Enrichment/",name,"_enrichment.pdf"))
+  go_plot=dotplot(gse_go,title=paste0("gseGO ",name))
+  kegg_plot=dotplot(gse_kegg,title= paste0("KEGG enriched pathways ",name))
+  print(go_plot)
+  print(kegg_plot)
+  dev.off()
+  Sys.sleep(1)
+  
+}
+
+for(disease in diseases_names){
+  enrichment(disease)
+}
+```
+
+
+### Cancer-specific subnetworks creation, in the form of an edge list
+```{r}
+library("Hmisc")
+interactome <- read.csv("all_data_21_12_24.tsv",
+                         header = TRUE,
+                         sep = "\t",
+                         quote = "",        # Disable quote handling
+                         fill = TRUE,       # Handle unequal lines
+                         strip.white = TRUE # Remove whitespace
+)
+
+print(dim(interactome))
+
+interactome <- interactome[!(interactome$ENTITYA == "" | 
+                            interactome$ENTITYB == "" | 
+                            is.na(interactome$SCORE)), ]
+
+print(dim(interactome))
+#We modify the genes names in the interactome using genes_dict
+load("dic.RData")
+
+mod_ent_A <- sapply(interactome$ENTITYA, function(gene_name) {
+  if (gene_name %in% names(genes_dict)) {
+    return(genes_dict[[gene_name]])
+    
+  } else {
+    return(gene_name)
+  }
+})
+
+
+mod_ent_B <- sapply(interactome$ENTITYB, function(gene_name) {
+  if (gene_name %in% names(genes_dict)) {
+    return(genes_dict[[gene_name]])
+    
+  } else {
+    return(gene_name)
+  }
+})
+
+names(mod_ent_A)=NULL
+names(mod_ent_B)=NULL
+
+interactome$ENTITYA=mod_ent_A
+interactome$ENTITYB=mod_ent_B
+
+genes_from_interactome=c(interactome$ENTITYA,interactome$ENTITYB)
+genes_from_interactome=unique(genes_from_interactome)
+specific_edgelist_creation=function(name){
+  DEG=read.csv(file=paste0("Thesis/DEG/",name,"_DEG_symbol.csv"),header=TRUE)
+  row.names(DEG)=DEG$Row.names
+  DEG=DEG[,c(-1,-2,-3,-4,-5,-6,-7,-8)]
+  DEG=DEG[row.names(DEG) %in% genes_from_interactome,]
+  #rcorr Computes a matrix of Pearson's correlation coefficients for all possible #pairs of columns of a matrix. in our case, we want genes to be the columns, and #samples to be the rows. It also compute a pvalue for each coefficient
+  res = rcorr(t(DEG), type="pearson")
+  
+  rho = res$r
+  pval = res$P
+
+  pval_adj = p.adjust(pval, method = "fdr")
+  
+  pval_adj = matrix(pval_adj, ncol = ncol(pval), 
+                     dimnames = list(row = row.names(rho), col = colnames(rho)))
+                     
+
+  ut = upper.tri(rho)
+  
+  edge_list = data.frame(source = rownames(rho)[row(rho)[ut]],
+                          target = rownames(rho)[col(rho)[ut]],
+                          correlation  = rho[ut],
+                          pval = pval[ut]
+                          ,pval_adj = pval_adj[ut]
+                         )
+  
+  edge_list=edge_list[edge_list$pval_adj<0.05,]
+  edge_list$comb=paste(edge_list$source,edge_list$target,sep="_")
+  int_comb=paste(interactome$ENTITYA,interactome$ENTITYB,sep="_")
+  
+  edge_list=edge_list[edge_list$comb %in% int_comb,]
+  write.csv(edge_list, file=paste0("Thesis/edge_lists/", name,"_edgelist_symbol.csv"), row.names=TRUE)
+  data=data.frame(a=c(name),b=length(unique(c(edge_list$source,edge_list$target))))
+  write.table(data,file="DEGs_in_edge_lists.csv",row.names = FALSE,append=TRUE,col.names = FALSE)
+}
+
+for (name in diseases_names){specific_edgelist_creation(name)}
+```
+
+
+
+### Nodes score
+```{r}
+library(igraph)
+library(SANTA)
+nodes_score=function(name){
+  edge_list=read.csv(file=paste0("Thesis/edge_lists/", name,"_edgelist_symbol.csv"))
+  degs=read.csv(file=paste0("Thesis/DEG/",name,"_DEG_symbol.csv"))
+  degs$Row.names=as.character(degs$Row.names)
+  char_edges=edge_list[,2:3]
+  char_edges$source=as.character(char_edges$source)
+  char_edges$target=as.character(char_edges$target)
+
+  graph=graph_from_data_frame(char_edges,directed = FALSE)
+  graph = set_edge_attr(graph, "weight", value=edge_list$correlation)
+  node_degree=degree(graph)
+  degs=degs[degs$Row.names %in% names(node_degree),]
+  
+  idx = match(degs$Row.names,names(node_degree))
+  node_degree=node_degree[idx]
+  node_weights=node_degree*abs(degs$log2FoldChange)
+  V(graph)$nw=node_weights
+  V(graph)$nw = (V(graph)$nw - min(V(graph)$nw))/(max(V(graph)$nw) - min(V(graph)$nw))
+  
+  E(graph)$dist = -log10(abs((E(graph)$weight)) + 1e-6)
+  E(graph)$dist = (E(graph)$dist - min(E(graph)$dist))/(max(E(graph)$dist) - min(E(graph)$dist))
+  knode_scores=Knode(graph, dist.method="diffusion", vertex.attr="nw",
+                        edge.attr="dist", verbose=FALSE)
+  idx = match(degs$Row.names,names(knode_scores))
+  knode_scores=knode_scores[idx]
+  degs$knode_scores=knode_scores
+  degs = degs[order(degs$knode_scores, decreasing = TRUE),]
+  degs$knode_rank = 1:dim(degs)[1]
+  write.csv(degs, file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"))
+}
+
+for (name in diseases_names){nodes_score(name)}
+
+
+```
+
+### IML with KNN
+```{r}
+library(iml)
+library(caret)
+
+
+set.seed(123)
+iml_with_knn=function(name){
+  degs=read.csv(file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"), row.names = "Row.names")
+  
+  # We consider less genes if we have less samples, to avoid overfitting
+  n=25
+  if(dim(degs)[2]>250){n=50}
+  if(dim(degs)[2]>500){n=100}
+  selected_degs=degs[1:n,]
+  selected_degs = subset(selected_degs, select=-c(X.1,X, baseMean,log2FoldChange,lfcSE,stat,pvalue,padj,knode_scores,knode_rank))
+  selected_degs=as.data.frame(t(selected_degs))
+  colnames(selected_degs)=make.names(colnames(selected_degs),unique=TRUE)
+  Y = as.factor(substr(rownames(selected_degs), 0, 2))
+  
+  
+  selected_degs$Y=Y
+  
+  nfolds=5
+  
+  cv_index = createFolds(selected_degs$Y, k=nfolds, returnTrain = T)
+  
+  tr_control= trainControl(
+  method ="cv",
+  summaryFunction = twoClassSummary,
+  selectionFunction = "best",
+  index = cv_index,
+  classProbs = TRUE
+)
+
+  
+
+  model=caret::train(Y~.,data=selected_degs,method="knn",metric="ROC",trControl = tr_control)
+
+
+  predictor = Predictor$new(model, data = as.data.frame(subset(selected_degs, select=-c(Y))),y=Y)
+  imp = FeatureImp$new(predictor, loss = "ce",compare="difference",n.repetitions = 20)
+  sign_genes=imp$results[imp$results$importance>0,]
+  print(name)
+  print(dim(sign_genes)[1])
+  
+  data=data.frame(disease=c(name),number_of_sign_genes=c(dim(sign_genes)[1]))
+  
+  write.table(data,file="Number of Significant genes for each disease.csv",row.names = FALSE,append=TRUE,col.names = FALSE)
+  write.csv(sign_genes, file=paste0("Thesis/sign_genes/", name,"sign_genes.csv"))
+}
+
+for(name in diseases_names){iml_with_knn(name)}
+```
+
+
+
+### Significant genes vs top log2foldchange genes
+```{r}
+library(caret)
+set.seed(24)
+
+data=data.frame(disease=c("disease"),sign_genes_auc=c("AUC sign genes"),log2fc_genes_AUC=c("AUC log2fc"),acc_sign_genes=c("accuracy sign genes"),acc_log2fc_genes=c("accuracy log2fc"),sign_genes_kappa=c("kappa sign genes"),log2fc_kappa=c("kappa log2fc"))
+
+   write.table(data,file="Significant genes vs top log2fc genes.csv",row.names = FALSE,append=TRUE,col.names = FALSE)
+
+
+#we choose svm because it is robust to overfitting
+svm=function(name){
+  degs=read.csv(file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"), row.names = "Row.names")
+  sign_genes=read.csv(paste0("Thesis/sign_genes/", name,"sign_genes.csv"),row.names="X")$feature
+  n=length(sign_genes)
+  abs_log2fc=abs(degs$log2FoldChange)
+  degs$abs_log2fc=abs_log2fc
+  #rownames(degs)=paste0("X",rownames(degs))
+
+  degs = degs[order(degs$abs_log2fc, decreasing = TRUE),]
+
+  log2fc_genes=head(degs,n)
+  log2fc_genes = subset(log2fc_genes, select=-c(X.1,X, baseMean,log2FoldChange,lfcSE,stat,pvalue,padj,knode_scores,knode_rank,abs_log2fc))
+  log2fc_genes=as.data.frame(t(log2fc_genes))
+  Y = as.factor(substr(rownames(log2fc_genes), 0, 2))
+
+  nfolds=5
+  
+  #cv_index = createFolds(Y_log2fc, k=nfolds, returnTrain = T)
+  
+  tr_control= trainControl(
+  method ="repeatedcv",
+  number=nfolds,
+  search = "grid",
+  summaryFunction = twoClassSummary,
+  selectionFunction = "best",
+  #index = cv_index,
+  classProbs = TRUE,
+  savePredictions = "final",
+  repeats=10
+)
+  log2fc_genes$Y=Y
+  model_log2fc=caret::train(Y~.,data=log2fc_genes,method="svmRadial",metric="ROC",trControl = tr_control)
+  
+  AUC_log2fc=max(model_log2fc$results$ROC)
+  cmlog=caret::confusionMatrix(data=model_log2fc$pred$pred,reference=model_log2fc$pred$obs)
+  accuracy_log2fc=cmlog$overall[["Accuracy"]]
+  kappa_log2fc=cmlog$overall[["Kappa"]]
+  
+  sign_degs=degs[rownames(degs) %in% sign_genes,]
+  sign_degs = subset(sign_degs, select=-c(X.1,X, baseMean,log2FoldChange,lfcSE,stat,pvalue,padj,knode_scores,knode_rank,abs_log2fc))
+  sign_degs=as.data.frame(t(sign_degs))
+  Y = as.factor(substr(rownames(sign_degs), 0, 2))
+  sign_degs$Y=Y
+  
+   model_sign_genes=caret::train(Y~.,data=sign_degs,method="svmRadial",metric="ROC",trControl = tr_control)
+  
+   AUC_sign_genes=max(model_sign_genes$results$ROC)
+   cm=caret::confusionMatrix(model_sign_genes$pred$pred,model_sign_genes$pred$obs)
+   accuracy_sign_genes=cm$overall[["Accuracy"]]
+   kappa_sign_genes=cm$overall[["Kappa"]]
+
+   metrics=data.frame(disease=c(name),sign_genes_auc=c(round(AUC_sign_genes,4)),log2fc_genes_AUC=c(round(AUC_log2fc,4)),acc_sign_genes=c(round(accuracy_sign_genes,4)),acc_log2fc_genes=c(round(accuracy_log2fc,4)),sign_genes_kappa=c(round(kappa_sign_genes,4)),log2fc_kappa=c(round(kappa_log2fc,4)))
+   
+   metrics=format(metrics, digits=4, nsmall=4)
+
+   write.table(metrics,file="Significant genes vs top log2fc genes.csv",row.names = FALSE,append=TRUE,col.names = FALSE)
+   
+}
+
+for(name in diseases_names){svm(name)}
+```
+
+
+### Creation of input for the algorithm
+```{r}
+data=data.frame(disease=c("disease"),genes_ids=c("GeneID"))
+
+for(i in 1:nrow(data)){
+  write.table(x = data[i,], 
+              file="Significant_genes.txt",row.names = FALSE,append=TRUE,col.names = FALSE, quote=FALSE, sep="\t")
+}
+
+   
+input_creation=function(name){
+   sign_genes=read.csv(file=paste0("Thesis/sign_genes/", name,"sign_genes.csv"), row.names="X")
+  entrez_ids=sign_genes$feature
+  df=data.frame(disease=c(name),signif_genes=entrez_ids)
+  for(i in 1:nrow(df)){
+  write.table(x = df[i,], 
+              file="Significant_genes.txt",row.names = FALSE,append=TRUE,col.names = FALSE, quote=FALSE, sep="\t")
+}
+}
+
+for(name in diseases_names){input_creation(name)}
+```
+
+
+
+
+
+
+# We fix the genes name on the interactome and we modify the "effects" column to have only "UP" or "DOWN" values. We save this new interactome in a new file
+```{r}
+
+interactome <- read.csv("all_data_21_12_24.tsv",
+                         header = TRUE,
+                         sep = "\t",
+                         quote = "",        # Disable quote handling
+                         fill = TRUE,       # Handle unequal lines
+                         strip.white = TRUE # Remove whitespace
+)
+#We modify the genes names in the interactome using genes_dict
+load("dic.RData")
+
+interactome <- interactome[!(interactome$ENTITYA == "" | 
+                            interactome$ENTITYB == "" | 
+                            is.na(interactome$SCORE)), ]
+
+mod_ent_A <- sapply(interactome$ENTITYA, function(gene_name) {
+  if (gene_name %in% names(genes_dict)) {
+    return(genes_dict[[gene_name]])
+    
+  } else {
+    return(gene_name)
+  }
+})
+
+
+mod_ent_B <- sapply(interactome$ENTITYB, function(gene_name) {
+  if (gene_name %in% names(genes_dict)) {
+    return(genes_dict[[gene_name]])
+    
+  } else {
+    return(gene_name)
+  }
+})
+
+names(mod_ent_A)=NULL
+names(mod_ent_B)=NULL
+
+interactome$ENTITYA=mod_ent_A
+interactome$ENTITYB=mod_ent_B
+
+mod_eff <- sapply(interactome$EFFECT, function(gene_eff) {
+  if (substr(gene_eff,1,4)=="down") {
+    return("down")
+    
+  } else if (substr(gene_eff,1,2)=="up"){
+    return("up")
+  }
+    else {return (NA)}
+})
+
+
+names(mod_eff)=NULL
+
+interactome$EFFECT=mod_eff
+
+print(dim(interactome))
+
+#We remove rows for which we could not determine the effect
+interactome=interactome[!is.na(interactome$EFFECT),]
+
+print(dim(interactome))
+
+#write.csv(interactome,"interactome.csv")
+
+```
+
+# Computing the signicant connection score between drug targets and diseases modules
+```{r}
+library("igraph")
+library("dplyr")
+diseases_modules=read.csv("Significant_genes.txt",header=TRUE, sep="\t")
+
+disease_vec=character()
+diz_target_vec=character()
+lf2c_vec=numeric()
+
+#we need to add the log2fc information to the diseases_modules.
+for (name in diseases_names){
+  degs=read.csv(file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"), row.names = "Row.names")[,c("X","log2FoldChange")]
+  sign_genes=diseases_modules$GeneID[diseases_modules$disease==name]
+  degs=degs[degs$X %in% sign_genes,]
+  disease_vec=c(disease_vec,rep(name,nrow(degs)))
+  diz_target_vec=c(diz_target_vec,degs$X)  
+  lf2c_vec=c(lf2c_vec,degs$log2FoldChange)  
+}
+
+
+diz_modules_with_l2fc=data.frame(disease=disease_vec,genename=diz_target_vec,l2fc=lf2c_vec)
+
+
+drugs_targets=read.csv("mod_P07.csv",header=TRUE)
+interactome=read.csv("interactome.csv",header=TRUE)
+interactome=interactome[,c("ENTITYA","ENTITYB","EFFECT","SCORE")]
+#remove duplicates. We choose only the value with highest score
+interactome=interactome[order(interactome$SCORE,decreasing = TRUE),]
+interactome=interactome[complete.cases(interactome),]
+
+#check for duplicates
+combination=paste(interactome$ENTITYA,interactome$ENTITYB,sep="_")
+interactome=interactome[!duplicated(combination),]
+#remove self loops
+interactome=interactome[interactome$ENTITYA!=interactome$ENTITYB,]
+
+
+# Create an igraph object with EFFECT and SCORE edges' attributes
+int_graph=graph_from_data_frame(interactome, directed=TRUE)
+
+# We only consider drug_targets present in the interactome
+genes_from_interactome=c(interactome$ENTITYA,interactome$ENTITYB)
+genes_from_interactome=unique(genes_from_interactome)
+drugs_targets=drugs_targets[drugs_targets$Gene_name %in% genes_from_interactome,]
+
+targettable_genes=unique(drugs_targets$Gene_name)
+#We only keep some MOA
+drugs_targets=drugs_targets[drugs_targets$MOA %in% c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker", "Activator", "Agonist"),]
+
+
+
+# use the following code to see duplicated rows
+# drugs_targets[duplicated(drugs_targets[,c("DrugID","Gene_name")]) | duplicated(drugs_targets[,c("DrugID","Gene_name")],fromLast = TRUE),]
+
+#Use the following code to verify that each drug is associated with only one 
+# "Highest status"
+
+control=drugs_targets %>%group_by(DrugID) %>% mutate(same = (n_distinct(Highest_status) == 1))
+print(sum(control$same!=TRUE)) # we get a zero
+
+
+
+#We remove duplicated rows, since some rows are only distinguished by their 
+#target ids, even if they have the same gene name.
+drugs_targets=drugs_targets[,c("DrugID","MOA","Gene_name")]
+drugs_targets=drugs_targets[!duplicated(drugs_targets),]
+print(dim(drugs_targets))
+
+
+
+
+```
+
+
+# Computing all "default" connection scores
+First, we compute the "effect" going from any targettable-by-a-drug point of the interactome  to any point representing a disease. This computation does not consider neither the drug MOA (we just use "activator" as default) neither the disease genes upregulated or downregulated state. We will consider this later.
+
+```{r}
+#first we consider only "paths" with at least one step
+
+all_arriving_points=unique(diz_modules_with_l2fc$genename)
+diz_ids_vector=character()
+start_point_vector=character()
+arrive_point_vector=character()
+sign_score_vector=numeric()
+counter=0
+
+# Find all nodes that can reach at least one arriving point
+useful_nodes <- unique(unlist(lapply(all_arriving_points, function(end_node) {
+  # Get all nodes that can reach this end node by reversing the graph
+  predecessors <- igraph::subcomponent(int_graph, end_node, mode="in")
+  return(predecessors)
+})))
+
+
+# Create subgraph with only useful nodes
+reduced_graph <- igraph::induced_subgraph(int_graph, useful_nodes)
+print(length(reduced_graph))
+
+red_targettable_genes=targettable_genes[targettable_genes %in% names(V(reduced_graph))]
+
+for (start_point in red_targettable_genes){
+  counter=counter+1
+  print(counter)
+  for (arrive_point in all_arriving_points){
+    if (start_point!=arrive_point){
+      tot_sign_score=numeric()
+      paths=all_shortest_paths(graph=reduced_graph,from=start_point,to=arrive_point,mode="out")$vpaths
+      if (length(paths)>0){
+    for(i in 1:length(paths)){
+      state=1 # Like if the drug is "upregulating" its target
+  
+      current_score=10**5
+      path=paths[[i]]
+      for (y in 1:(length(path)-1)){
+        current_gene=path[[y]]$name
+        next_gene=path[[y+1]]$name
+        edge=E(reduced_graph)[current_gene %->%next_gene]
+        action=edge$EFFECT
+        score=edge$SCORE
+        current_score=current_score*score
+        if (action=="down"){
+          state=state*-1 #this updated state refers to the next_gene
+        } else if (action =="up"){
+          state=state*1
+        
+      
+        }}
+      current_score=current_score*state
+      tot_sign_score=c(tot_sign_score,current_score)
+    }
+      summed_sign_score=sum(tot_sign_score) 
+      start_point_vector=c(start_point_vector,start_point)
+      arrive_point_vector=c(arrive_point_vector,arrive_point)
+      sign_score_vector=c(sign_score_vector,summed_sign_score)
+      }}}}
+
+# we add cases where target gene and disease gene are the same
+inters=intersect(targettable_genes,all_arriving_points)
+start_point_vector=c(start_point_vector,inters)
+arrive_point_vector=c(arrive_point_vector,inters)
+sign_score_vector=c(sign_score_vector,rep(10**5,length(inters)))
+
+
+
+
+
+df = data.frame(FROM=start_point_vector,TO=arrive_point_vector,default_sign_conn_score=sign_score_vector)
+
+
+#write.csv(df, "Sign_Scores.csv")
+```
+
+
+
+
+Now we have the Sign_Scores for every pair of drug target / disease gene (when a connection is possible). the Sign_scores relative to a drug-disease pair are given by the sum of all the Sign_scores relative to connections going from the drug module to the disease module. We will use a simulation to compute a pvalue which can help us deciding if a certain Sign_score value between a drug module of a certain size and a disease module of a certain size is statistically significant.
+
+```{r}
+sign_scores=read.csv("Sign_Scores.csv", row.names = "X")
+
+# Using %in% with ifelse
+positive_categories <- c("Activator", "Agonist")
+negative_categories <- c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker")
+
+drugs_targets$mapped_MOA <- ifelse(drugs_targets$MOA %in% positive_categories, 1, -1)
+
+diz_modules_with_l2fc$mapped_l2fc <- ifelse(diz_modules_with_l2fc$l2fc >= 0, 1, -1)
+
+
+
+print(head(sign_scores))
+print(head(diz_modules_with_l2fc))
+head(drugs_targets)
+```
+
+
+```{r}
+
+set.seed(123)
+
+# Initialize results dataframe
+results <- data.frame()
+
+# Number of simulations
+n_simulations <- 1000
+
+calculate_total_distance <- function(drugs_targets, diz_modules_with_l2fc, sign_scores) {
+    total_dist <- 0
+    
+    # For each FROM point
+    for(i in 1:nrow(drugs_targets)) {
+        from_point <- drugs_targets$Gene_name[i]
+        from_mult <- drugs_targets$mapped_MOA[i]
+        
+        # For each TO point
+        for(j in 1:nrow(diz_modules_with_l2fc)) {
+            to_point <- diz_modules_with_l2fc$genename[j]
+            to_mult <- diz_modules_with_l2fc$mapped_l2fc[j]
+            
+            # Get the distance
+            dist <- sign_scores$default_sign_conn_score[sign_scores$FROM == from_point & sign_scores$TO == to_point]
+            if(length(dist) > 0) {
+                # Apply both multipliers
+                total_dist <- total_dist + (dist * from_mult * to_mult)
+            }
+        }
+    }
+    return(total_dist)
+}
+
+
+# Get unique module names
+from_sizes <- unique(as.data.frame(table(drugs_targets$DrugID))$Freq)
+
+to_sizes <- unique(as.data.frame(table(diz_modules_with_l2fc$disease))$Freq)
+
+for(from_size in from_sizes) {
+    print(from_size)
+    for(to_size in to_sizes) {
+        simulated_dists <- numeric(n_simulations)
+        
+        
+        for(i in 1:n_simulations) {
+            # Sample random unique points
+            random_from_points <- sample(unique(drugs_targets$Gene_name), from_size)
+            random_to_points <- sample(unique(diz_modules_with_l2fc$genename), to_size)
+            
+            # Get all rows associated with these points
+            random_from_df <- drugs_targets[drugs_targets$Gene_name %in% random_from_points, ]
+            random_to_df <- diz_modules_with_l2fc[diz_modules_with_l2fc$genename %in% random_to_points, ]
+            
+            simulated_dists[i] <- calculate_total_distance(random_from_df, random_to_df, sign_scores)
+        }
+        
+        # Calculate z-score and p-value
+        mean_sim <- mean(simulated_dists)
+        sd_sim <- sd(simulated_dists)
+        
+        # Add to results
+        current_row <- data.frame(
+          drug_size = from_size,
+          diz_size = to_size,
+          sim_mean = mean_sim,
+          sim_sd = sd_sim
+          )
+        results <- bind_rows(results, current_row)
+
+    }
+}
+
+
+#write.csv(results,"Simulation_results.csv")
+
+```
+
+```{r}
+#saveRDS(simulated_dists, "my_vector.rds")
+
+# Later, load the vector back
+loaded_vector <- readRDS("my_vector.rds")
+```
+
+
+```{r}
+library("igraph")
+library("dplyr")
+
+sim_res=read.csv("simulation_results.csv",row.names = "X")
+print(head(sim_res))
+sig_sco=read.csv("Sign_scores.csv",row.names ="X")
+print(head(sig_sco))
+
+diseases_modules=read.csv("Significant_genes.txt",header=TRUE, sep="\t")
+
+disease_vec=character()
+diz_target_vec=character()
+lf2c_vec=numeric()
+
+#we need to add the log2fc information to the diseases_modules.
+for (name in diseases_names){
+  degs=read.csv(file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"), row.names = "Row.names")[,c("X","log2FoldChange")]
+  sign_genes=diseases_modules$GeneID[diseases_modules$disease==name]
+  degs=degs[degs$X %in% sign_genes,]
+  disease_vec=c(disease_vec,rep(name,nrow(degs)))
+  diz_target_vec=c(diz_target_vec,degs$X)  
+  lf2c_vec=c(lf2c_vec,degs$log2FoldChange)  
+}
+
+
+diz_modules_with_l2fc=data.frame(disease=disease_vec,genename=diz_target_vec,l2fc=lf2c_vec)
+
+diz_modules_with_l2fc$mapped_l2fc <- ifelse(diz_modules_with_l2fc$l2fc >= 0, 1, -1)
+
+print(head(diz_modules_with_l2fc))
+
+drugs_targets=read.csv("mod_P07.csv",header=TRUE)
+interactome=read.csv("interactome.csv",header=TRUE)
+interactome=interactome[,c("ENTITYA","ENTITYB","EFFECT","SCORE")]
+#remove duplicates. We choose only the value with highest score
+interactome=interactome[order(interactome$SCORE,decreasing = TRUE),]
+interactome=interactome[complete.cases(interactome),]
+
+#check for duplicates
+combination=paste(interactome$ENTITYA,interactome$ENTITYB,sep="_")
+interactome=interactome[!duplicated(combination),]
+#remove self loops
+interactome=interactome[interactome$ENTITYA!=interactome$ENTITYB,]
+
+
+# Create an igraph object with EFFECT and SCORE edges' attributes
+int_graph=graph_from_data_frame(interactome, directed=TRUE)
+
+# We only consider drug_targets present in the interactome
+genes_from_interactome=c(interactome$ENTITYA,interactome$ENTITYB)
+genes_from_interactome=unique(genes_from_interactome)
+drugs_targets=drugs_targets[drugs_targets$Gene_name %in% genes_from_interactome,]
+
+targettable_genes=unique(drugs_targets$Gene_name)
+#We only keep some MOA
+drugs_targets=drugs_targets[drugs_targets$MOA %in% c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker", "Activator", "Agonist"),]
+
+
+
+# use the following code to see duplicated rows
+# drugs_targets[duplicated(drugs_targets[,c("DrugID","Gene_name")]) | duplicated(drugs_targets[,c("DrugID","Gene_name")],fromLast = TRUE),]
+
+#Use the following code to verify that each drug is associated with only one 
+# "Highest status"
+
+control=drugs_targets %>%group_by(DrugID) %>% mutate(same = (n_distinct(Highest_status) == 1))
+print(sum(control$same!=TRUE)) # we get a zero
+
+
+
+#We remove duplicated rows, since some rows are only distinguished by their 
+#target ids, even if they have the same gene name.
+drugs_targets=drugs_targets[,c("DrugID","MOA","Gene_name")]
+drugs_targets=drugs_targets[!duplicated(drugs_targets),]
+
+# Using %in% with ifelse
+positive_categories <- c("Activator", "Agonist")
+negative_categories <- c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker")
+
+drugs_targets$mapped_MOA <- ifelse(drugs_targets$MOA %in% positive_categories, 1, -1)
+
+print(head(drugs_targets))
+```
+
+```{r} 
+
+# Assuming from_modules_df has columns: point, module, multiplier
+# and to_modules_df has columns: point, module, multiplier
+# distance_df has: FROM, TO, distance
+set.seed(123)
+# Get unique module names
+from_modules <- unique(drugs_targets$DrugID)
+to_modules <- unique(diz_modules_with_l2fc$disease)
+
+# Initialize results dataframe
+observed_res <- data.frame()
+
+# Number of simulations
+n_simulations <- 1000
+
+calculate_total_distance <- function(drugs_targets, diz_modules_with_l2fc, sign_scores) {
+    total_dist <- 0
+    
+    # For each FROM point
+    for(i in 1:nrow(drugs_targets)) {
+        from_point <- drugs_targets$Gene_name[i]
+        from_mult <- drugs_targets$mapped_MOA[i]
+        
+        # For each TO point
+        for(j in 1:nrow(diz_modules_with_l2fc)) {
+            to_point <- diz_modules_with_l2fc$genename[j]
+            to_mult <- diz_modules_with_l2fc$mapped_l2fc[j]
+            
+            # Get the distance
+            dist <- sign_scores$default_sign_conn_score[sign_scores$FROM == from_point & sign_scores$TO == to_point]
+            if(length(dist) > 0) {
+                # Apply both multipliers
+                total_dist <- total_dist + (dist * from_mult * to_mult)
+            }
+        }
+    }
+    return(total_dist)
+}
+
+
+for(from_mod in from_modules) {
+
+    for(to_mod in to_modules) {
+        # Get points and their multipliers for current modules
+        current_from_df <- drugs_targets[drugs_targets$DrugID == from_mod, ]
+        current_to_df <- diz_modules_with_l2fc[diz_modules_with_l2fc$disease == to_mod, ]
+        
+        # Calculate original distance with multipliers
+        original_dist <- calculate_total_distance(current_from_df, current_to_df, sig_sco)
+        
+        
+        # Get number of unique points in current modules
+        n_from_points <- length(unique(current_from_df$Gene_name))
+        n_to_points <- length(unique(current_to_df$genename))
+        
+      
+        
+        # Add to results
+        observed_res <- rbind(observed_res, data.frame(
+            from_module = from_mod,
+            to_module = to_mod,
+            distance = original_dist,
+            drug_size = n_from_points,
+            diz_size = n_to_points
+        ))
+    }
+}
+
+
+
+#write.csv(observed_res,"Observed_results.csv")
+
+```
+
+
+
+
+```{r}
+obs_res=read.csv("Observed_results.csv",header=TRUE,row.names="X")
+print(head(obs_res))
+sim_res=read.csv("Simulation_results.csv",header=TRUE,row.names="X")
+head(sim_res)
+```
+
+
+```{r}
+library("dplyr")
+complete_results <- left_join(obs_res, sim_res, by = c("drug_size" = "drug_size", "diz_size" = "diz_size"))
+head(complete_results)
+complete_results$p_val <- pnorm(complete_results$distance, mean = complete_results$sim_mean, sd = complete_results$sim_sd, lower.tail = T)
+#complete_results$cauchy_pval <- pt((complete_results$distance - complete_results$sim_mean)/complete_results$sim_sd, df=1, lower.tail = T)
+sum(complete_results$p_val<=0.05)
+selected_results=complete_results[complete_results$p_val<=0.05,]
+selected_results=selected_results[order(selected_results$distance,decreasing = FALSE),]
+selected_results
+```
+
+```{r}
+int_drug_targ=drugs_targets[drugs_targets$DrugID %in% selected_results$from_module, ]
+unique(int_drug_targ$Gene_name)
+```
+
+```{r}
+head(complete_results[order(complete_results$distance,decreasing = F),],66)
+#61 of these values are in common with the 66 values with pvalue <0.05
+```
+
+```{r}
+#write.csv(selected_results,"Selected_results.csv",row.names = FALSE)
+#
+```
+
+
+```{r}
+sel_results=read.csv("Selected_results.csv")
+
+
+```
+We analyze the results and add the drug name information
+```{r}
+
+#We first need to organize the txt file we downloaded.
+library(readr)
+
+drugs_names_and_ttdids=read_lines("P1-03-TTD_crossmatching.txt",skip=27,skip_empty_rows = TRUE)
+
+ttdids_column=character()
+drugnames_column=character()
+
+for(elem in drugs_names_and_ttdids){
+  line_splitted=strsplit(elem, "\t")[[1]]
+  if (line_splitted[2]=="TTDDRUID"){
+    ttd_id=line_splitted[3]
+  }
+  if (line_splitted[2]=="DRUGNAME"){
+    ttdids_column=append(ttdids_column,ttd_id)
+    drugnames_column=append(drugnames_column,line_splitted[3])
+  }
+}
+
+ttdid_to_drugname=data.frame(ttdids=ttdids_column,drugnames=drugnames_column)
+#write.table(ttdid_to_drugname,file="ttdid_to_drugname.csv",row.names=FALSE)
+```
+
+
+```{r}
+ttdid_to_drugname=read.table("ttdid_to_drugname.csv",header=TRUE)
+
+selected_results_with_drugnames <- merge(sel_results, ttdid_to_drugname, by.x = "from_module",by.y="ttdids", all.x = TRUE)
+
+#write.csv(selected_results_with_drugnames,"Selected_results_with_drugnames.csv")
+
+```
+
+```{r}
+drugnames=read.csv("Selected_results_with_drugnames.csv")$drugnames
+drugnames=drugnames[!is.na(drugnames)]
+drugnames=tolower(drugnames)
+print(length(drugnames))
+print(length(drugnames[grepl("quinoline",drugnames)]))
+drugnames=drugnames[!grepl("quinoline",drugnames)]
+drugnames=drugnames[!grepl("pyrazole",drugnames)]
+drugnames=drugnames[!grepl("pmid",drugnames)]
+```
+
+#Path analysis
+We recreate the graph
+```{r}
+library("igraph")
+library("dplyr")
+diseases_modules=read.csv("Significant_genes.txt",header=TRUE, sep="\t")
+
+disease_vec=character()
+diz_target_vec=character()
+lf2c_vec=numeric()
+
+#we need to add the log2fc information to the diseases_modules.
+for (name in diseases_names){
+  degs=read.csv(file=paste0("Thesis/DEG_with_knode/", name,"_DEG_knode.csv"), row.names = "Row.names")[,c("X","log2FoldChange")]
+  sign_genes=diseases_modules$GeneID[diseases_modules$disease==name]
+  degs=degs[degs$X %in% sign_genes,]
+  disease_vec=c(disease_vec,rep(name,nrow(degs)))
+  diz_target_vec=c(diz_target_vec,degs$X)  
+  lf2c_vec=c(lf2c_vec,degs$log2FoldChange)  
+}
+
+
+diz_modules_with_l2fc=data.frame(disease=disease_vec,genename=diz_target_vec,l2fc=lf2c_vec)
+diz_modules_with_l2fc$mapped_l2fc <- ifelse(diz_modules_with_l2fc$l2fc >= 0, 1, -1)
+
+
+
+drugs_targets=read.csv("mod_P07.csv",header=TRUE)
+interactome=read.csv("interactome.csv",header=TRUE)
+interactome=interactome[,c("ENTITYA","ENTITYB","EFFECT","SCORE","MECHANISM")]
+#remove duplicates. We choose only the value with highest score
+interactome=interactome[order(interactome$SCORE,decreasing = TRUE),]
+interactome=interactome[complete.cases(interactome),]
+
+#check for duplicates
+combination=paste(interactome$ENTITYA,interactome$ENTITYB,sep="_")
+interactome=interactome[!duplicated(combination),]
+#remove self loops
+interactome=interactome[interactome$ENTITYA!=interactome$ENTITYB,]
+
+
+# Create an igraph object with EFFECT and SCORE edges' attributes
+int_graph=graph_from_data_frame(interactome, directed=TRUE)
+
+# We only consider drug_targets present in the interactome
+genes_from_interactome=c(interactome$ENTITYA,interactome$ENTITYB)
+genes_from_interactome=unique(genes_from_interactome)
+drugs_targets=drugs_targets[drugs_targets$Gene_name %in% genes_from_interactome,]
+
+targettable_genes=unique(drugs_targets$Gene_name)
+#We only keep some MOA
+drugs_targets=drugs_targets[drugs_targets$MOA %in% c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker", "Activator", "Agonist"),]
+
+
+
+# use the following code to see duplicated rows
+# drugs_targets[duplicated(drugs_targets[,c("DrugID","Gene_name")]) | duplicated(drugs_targets[,c("DrugID","Gene_name")],fromLast = TRUE),]
+
+#Use the following code to verify that each drug is associated with only one 
+# "Highest status"
+
+control=drugs_targets %>%group_by(DrugID) %>% mutate(same = (n_distinct(Highest_status) == 1))
+print(sum(control$same!=TRUE)) # we get a zero
+
+
+
+#We remove duplicated rows, since some rows are only distinguished by their 
+#target ids, even if they have the same gene name.
+drugs_targets=drugs_targets[,c("DrugID","MOA","Gene_name")]
+drugs_targets=drugs_targets[!duplicated(drugs_targets),]
+print(dim(drugs_targets))
+
+# Using %in% with ifelse
+positive_categories <- c("Activator", "Agonist")
+negative_categories <- c("Inhibitor","Antagonist","Blocker", "Blocker (channel blocker)","Inhibitor; Antagonist; Blocker")
+
+drugs_targets$mapped_MOA <- ifelse(drugs_targets$MOA %in% positive_categories, 1, -1)
+
+
+
+```
+
+# Finding the paths connecting the modules
+
+```{r}
+#first we consider only "paths" with at least one step
+current_drug=selected_results[1,]$from_module
+current_diz=selected_results[1,]$to_module
+
+current_diz_module=diz_modules_with_l2fc[diz_modules_with_l2fc$disease==current_diz,]
+current_drug_module=drugs_targets[drugs_targets$DrugID==current_drug,]
+
+#Shouldnt be necessary to put unique here, so you can probably delete it
+diz_genes=unique(current_diz_module$genename)
+drug_genes=unique(current_drug_module$Gene_name)
+
+edges_vector=c()
+
+for (start_point in drug_genes){
+  for (arrive_point in diz_genes){
+    if (start_point!=arrive_point){
+      paths=all_shortest_paths(graph=int_graph,from=start_point,to=arrive_point,mode="out")$vpaths
+      if (length(paths)>0){
+    for(i in 1:length(paths)){
+
+      path=paths[[i]]
+      for (y in 1:(length(path)-1)){
+        current_gene=path[[y]]$name
+        next_gene=path[[y+1]]$name
+        edge=E(int_graph)[current_gene %->%next_gene]
+        edges_vector=c(edges_vector,edge)
+
+       }
+    }
+      
+      }}}}
+
+create_edge_subgraph <- function(g, edge_vector) {
+  # Get the vertex IDs for each edge
+  edge_vertices <- lapply(edge_vector, function(e) {
+    ends(g, e)
+  })
+  
+  # Combine all vertices into a single vector and get unique vertices
+  all_vertices <- unique(unlist(edge_vertices))
+  
+  # Create subgraph with the selected edges
+  subgraph.edges(g, 
+                 eids = as.numeric(edge_vector), 
+                 delete.vertices = T)
+}
+subg <- create_edge_subgraph(int_graph, edges_vector)
+
+
+```
+
+
+
+```{r}
+sig_sco=read.csv("Sign_scores.csv",row.names="X")
+current_sig_sco=sig_sco[(sig_sco$FROM %in% current_drug_module$Gene_name & sig_sco$TO %in% current_diz_module$genename),]
+df1=left_join(current_sig_sco,current_drug_module,by=c("FROM"="Gene_name"))
+df2=left_join(df1,current_diz_module,by=c("TO"="genename"))
+df2$final_sign_score=df2$default_sign_conn_score*df2$mapped_MOA*df2$mapped_l2fc
+min_score=min(df2$final_sign_score)
+df3=df2[df2$final_sign_score==min_score,]
+
+top_edges=c()
+top_sources=unique(df3$FROM)
+top_targets=unique(df3$TO)
+for (start_point in top_sources){
+  for (arrive_point in top_targets){
+    if (start_point!=arrive_point){
+      paths=all_shortest_paths(graph=int_graph,from=start_point,to=arrive_point,mode="out")$vpaths
+      if (length(paths)>0){
+    for(i in 1:length(paths)){
+      path=paths[[i]]
+      for (y in 1:(length(path)-1)){
+        current_gene=path[[y]]$name
+        next_gene=path[[y+1]]$name
+        edge=E(int_graph)[current_gene %->%next_gene]
+        top_edges=c(top_edges,edge)
+
+       }
+    }
+      
+      }}}}
+
+top_edges=unique(top_edges)
+
+top_subg=create_edge_subgraph(int_graph,top_edges)
+
+top_edges_df <- data.frame(
+  source = V(subg)[get.edgelist(top_subg)[,1]]$name,  # source nodes
+  target = V(subg)[get.edgelist(top_subg)[,2]]$name  # target nodes                     #
+)
+top_edges_df$TOP=rep(TRUE,length(top_edges))
+
+
+# Assuming your igraph object is named 'g'
+edge_list_df <- data.frame(
+  source = V(subg)[get.edgelist(subg)[,1]]$name,  # source nodes
+  target = V(subg)[get.edgelist(subg)[,2]]$name,  # target nodes
+  SCORE = E(subg)$SCORE,
+  MECHANISM = E(subg)$MECHANISM,
+  EFFECT =E(subg)$EFFECT
+)
+
+final_df=left_join(edge_list_df,top_edges_df,by=c("source","target"))
+final_df$TOP <- ifelse(is.na(final_df$TOP), FALSE, final_df$TOP)
+# Write to TSV
+#write.table(final_df, "subg_edge_list.tsv", sep="\t", row.names=FALSE, quote=FALSE)
+
+```
+
+
+```{r}
+all_genes=unique(c(final_df$source,final_df$target))
+nodes_attr=data.frame(gene=all_genes)
+nodes_attr$drug_gene=ifelse(nodes_attr$gene %in% drug_genes,TRUE,FALSE)
+nodes_attr$diz_gene=ifelse(nodes_attr$gene %in% diz_genes,TRUE,FALSE)
+
+nodes_attr$node_type <- case_when(
+  !nodes_attr$drug_gene & !nodes_attr$diz_gene ~ "path_node",
+  !nodes_attr$drug_gene & nodes_attr$diz_gene ~ "disease_gene",
+  nodes_attr$drug_gene & !nodes_attr$diz_gene ~ "drug_gene",
+  nodes_attr$drug_gene & nodes_attr$diz_gene ~ "drug_and_disease_gene"
+)
+#write.table(nodes_attr, "nodes_attr.tsv",sep="\t", row.names = FALSE, quote=FALSE)
+
+```
