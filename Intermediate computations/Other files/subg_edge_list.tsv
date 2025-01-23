@@ -1,0 +1,86 @@
+source	target	SCORE	MECHANISM	EFFECT	TOP
+CDH1	CTNNB1	0.96	binding	up	TRUE
+CDH3	CTNNB1	0.845	binding	up	TRUE
+CDH2	CTNNB1	0.811	binding	up	TRUE
+GRIA1	calcium.2..	0.8	relocalization	up	TRUE
+calcium.2..	CIB2	0.8	chemical activation	up	FALSE
+calcium.2..	CDH9	0.8	chemical activation	up	TRUE
+calcium.2..	CDH16	0.8	chemical activation	up	TRUE
+calcium.2..	CDH5	0.8	chemical activation	up	TRUE
+calcium.2..	CAPN1	0.8	chemical activation	up	FALSE
+calcium.2..	FLNA	0.8	chemical inhibition	down	FALSE
+calcium.2..	PRKCZ	0.8	chemical activation	up	TRUE
+calcium.2..	Cadherins	0.8	chemical activation	up	TRUE
+calcium.2..	CDH3	0.8	chemical activation	up	TRUE
+calcium.2..	CDH2	0.8	chemical activation	up	TRUE
+calcium.2..	CDH12	0.8	chemical activation	up	TRUE
+GRIA3	calcium.2..	0.8	relocalization	up	TRUE
+calcium.2..	PRKCA	0.8	chemical activation	up	FALSE
+calcium.2..	CDH22	0.8	chemical activation	up	TRUE
+calcium.2..	CAMK2G	0.8	chemical activation	up	FALSE
+calcium.2..	CDH1	0.8	chemical activation	up	TRUE
+calcium.2..	CDH11	0.8	chemical activation	up	TRUE
+calcium.2..	CDH10	0.8	chemical activation	up	TRUE
+calcium.2..	CDH24	0.8	chemical activation	up	TRUE
+calcium.2..	CDH15	0.8	chemical activation	up	TRUE
+GRIA4	calcium.2..	0.8	relocalization	up	TRUE
+calcium.2..	CDH7	0.8	chemical activation	up	TRUE
+calcium.2..	CDH20	0.8	chemical activation	up	TRUE
+calcium.2..	CDH18	0.8	chemical activation	up	TRUE
+calcium.2..	CDH8	0.8	chemical activation	up	TRUE
+calcium.2..	CDH23	0.8	chemical activation	up	TRUE
+calcium.2..	CDH17	0.8	chemical activation	up	TRUE
+calcium.2..	CDH6	0.8	chemical activation	up	TRUE
+calcium.2..	CDH19	0.8	chemical activation	up	TRUE
+calcium.2..	CAMK2A	0.8	chemical activation	up	FALSE
+calcium.2..	CDH13	0.8	chemical activation	up	TRUE
+calcium.2..	CDH4	0.8	chemical activation	up	TRUE
+GRIA2	calcium.2..	0.8	relocalization	up	TRUE
+FBXW7	MYC	0.753	ubiquitination	down	FALSE
+CDH5	CTNNB1	0.751	binding	up	TRUE
+CTNNB1	MYC	0.736	transcriptional regulation	up	FALSE
+GSK3B	MYC	0.709	phosphorylation	down	FALSE
+CDH17	CTNNB1	0.693	binding	up	TRUE
+CDH8	CTNNB1	0.665	binding	up	TRUE
+CDH11	CTNNB1	0.639	binding	up	TRUE
+CDH15	CTNNB1	0.62	binding	up	TRUE
+PRKCA	EGFR	0.592	phosphorylation	down	FALSE
+PRKCZ	CTNNB1	0.582	phosphorylation	down	TRUE
+PRKCZ	GSK3B	0.58	phosphorylation	down	FALSE
+CAMK2A	CREB1	0.577	phosphorylation	down	FALSE
+MAPK8	MYC	0.573	phosphorylation	up	FALSE
+CDH10	CTNNB1	0.569	binding	up	TRUE
+CDH9	CTNNB1	0.569	binding	up	TRUE
+CDH6	CTNNB1	0.56	binding	up	TRUE
+CDH18	CTNNB1	0.558	binding	up	TRUE
+CDH7	CTNNB1	0.549	binding	up	TRUE
+CDH24	CTNNB1	0.532	binding	up	TRUE
+CDH13	CTNNB1	0.514	binding	up	TRUE
+CDH4	CTNNB1	0.506	binding	up	TRUE
+CDH12	CTNNB1	0.489	binding	up	TRUE
+FLNA	MAPK8	0.488		up	FALSE
+CAMK2G	STAT1	0.486	phosphorylation	up	FALSE
+EGFR	MYC	0.478		up	FALSE
+JAK2	MYC	0.463	transcriptional regulation	up	FALSE
+GSK3A	MYC	0.415	phosphorylation	down	FALSE
+STAT1	MUC4	0.402	transcriptional regulation	up	FALSE
+CAMK2A	EGFR	0.378	phosphorylation	down	FALSE
+CDH16	CTNNB1	0.373	binding	up	TRUE
+CAMK2G	EGFR	0.369	phosphorylation	down	FALSE
+PRKCA	GSK3B	0.364	phosphorylation	down	FALSE
+PRKCA	GSK3A	0.352	phosphorylation	down	FALSE
+PRKCA	FBXW7	0.351	phosphorylation	down	FALSE
+mTORC1	MYC	0.348		up	FALSE
+CDH22	CTNNB1	0.338	binding	up	TRUE
+CDH19	CTNNB1	0.32	binding	up	TRUE
+CAMK2A	ETS1	0.314	phosphorylation	down	FALSE
+CDH20	CTNNB1	0.302	binding	up	TRUE
+CAPN1	GSK3B	0.301	cleavage	up	FALSE
+CDH23	CTNNB1	0.292	binding	up	TRUE
+CDH4	RAC1	0.277		up	FALSE
+CIB2	mTORC1	0.266	binding	down	FALSE
+PRKCA	JAK2	0.262	phosphorylation	up	FALSE
+CAPN1	GSK3A	0.2	cleavage	up	FALSE
+CREB1	MUC4	0.2	transcriptional regulation	up	FALSE
+ETS1	MUC4	0.2	transcriptional regulation	up	FALSE
+Cadherins	CTNNB1	0.2	binding	up	TRUE
