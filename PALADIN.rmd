@@ -1350,7 +1350,7 @@ top_edges_df <- data.frame(
 top_edges_df$TOP=rep(TRUE,length(top_edges))
 
 
-# Assuming your igraph object is named 'g'
+
 edge_list_df <- data.frame(
   source = V(subg)[get.edgelist(subg)[,1]]$name,  # source nodes
   target = V(subg)[get.edgelist(subg)[,2]]$name,  # target nodes
